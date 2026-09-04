@@ -8,6 +8,7 @@ console.log("シグナリングサーバー起動（port 10000）");
 
 let sender = null;
 let receivers = []; // ★複数受信者を管理
+let latestOffer = null; // ★最新の offer を保存
 
 function broadcastViewerCount() {
     const msg = JSON.stringify({ type: "viewer-count", count: receivers.length });
@@ -37,6 +38,12 @@ wss.on("connection", ws => {
             } else {
                 receivers.push(ws);
                 console.log("受信側が接続しました（現在 " + receivers.length + " 人）");
+
+                // ★新規受信者に最新 offer を送る（ここが重要）
+                if (latestOffer) {
+                    ws.send(JSON.stringify({ type: "offer", offer: latestOffer }));
+                    console.log("最新 offer を新規受信者に送信");
+                }
             }
 
             broadcastViewerCount();
@@ -44,6 +51,8 @@ wss.on("connection", ws => {
 
         // ★sender → receiver に offer を送る
         if (data.type === "offer") {
+            latestOffer = data.offer; // ★最新 offer を保存
+
             receivers.forEach(r => {
                 r.send(JSON.stringify({ type: "offer", offer: data.offer }));
             });
