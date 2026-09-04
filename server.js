@@ -1,6 +1,6 @@
 const WebSocket = require("ws");
 
-const PASSWORD = "mugichan";
+const PASSWORD = "1234";
 
 const wss = new WebSocket.Server({ port: 10000 });
 console.log("シグナリングサーバー起動（port 10000）");
