@@ -6,14 +6,14 @@ const PASSWORD = "mugisan";
 const wss = new WebSocket.Server({ port: 10000 });
 console.log("シグナリングサーバー起動（port 10000）");
 
-let sender = null;
-let receivers = []; // ★複数受信者を管理
-let latestOffer = null; // ★最新の offer を保存
+let sender = null;                 // 送信側（iPad）
+let receivers = [];                // 受信側一覧
+let nextReceiverId = 1;            // receiver に割り振るID
 
 function broadcastViewerCount() {
     const msg = JSON.stringify({ type: "viewer-count", count: receivers.length });
     if (sender) sender.send(msg);
-    receivers.forEach(r => r.send(msg));
+    receivers.forEach(r => r.ws.send(msg));
 }
 
 wss.on("connection", ws => {
@@ -36,49 +36,75 @@ wss.on("connection", ws => {
                 sender = ws;
                 console.log("送信側が接続しました");
             } else {
-                receivers.push(ws);
-                console.log("受信側が接続しました（現在 " + receivers.length + " 人）");
+                // ★receiver として登録
+                const id = nextReceiverId++;
+                receivers.push({ id, ws });
+                console.log(`受信側が接続しました（ID=${id}, 現在 ${receivers.length} 人）`);
 
-                // ★新規受信者に最新 offer を送る（ここが重要）
-                if (latestOffer) {
-                    ws.send(JSON.stringify({ type: "offer", offer: latestOffer }));
-                    console.log("最新 offer を新規受信者に送信");
+                // ★receiver本人に自分のIDを通知
+                ws.send(JSON.stringify({ type: "receiver-id", receiverId: id }));
+
+                // ★sender に「新しい視聴者が来たよ」と通知
+                if (sender) {
+                    sender.send(JSON.stringify({ type: "receiver-joined", receiverId: id }));
                 }
             }
 
             broadcastViewerCount();
         }
 
-        // ★sender → receiver に offer を送る
+        // ★sender → 特定 receiver に offer を送る
         if (data.type === "offer") {
-            latestOffer = data.offer; // ★最新 offer を保存
-
-            receivers.forEach(r => {
-                r.send(JSON.stringify({ type: "offer", offer: data.offer }));
-            });
-            console.log("offer を全受信者に送信");
+            const targetId = data.receiverId;
+            const target = receivers.find(r => r.id === targetId);
+            if (target) {
+                target.ws.send(JSON.stringify({
+                    type: "offer",
+                    offer: data.offer,
+                    receiverId: targetId
+                }));
+                console.log(`offer を受信側ID=${targetId} に送信`);
+            }
         }
 
         // ★receiver → sender に answer を送る
         if (data.type === "answer") {
             if (sender) {
-                sender.send(JSON.stringify({ type: "answer", answer: data.answer }));
+                sender.send(JSON.stringify({
+                    type: "answer",
+                    answer: data.answer,
+                    receiverId: data.receiverId
+                }));
+                console.log(`answer を送信（receiverId=${data.receiverId}）`);
             }
-            console.log("answer を送信");
         }
 
-        // ★ICE candidate の送信
+        // ★ICE candidate の送信（sender ⇔ 特定 receiver）
         if (data.type === "candidate") {
+            const targetId = data.receiverId;
+
+            // sender から来た candidate → 該当 receiver へ
             if (ws === sender) {
-                receivers.forEach(r => {
-                    r.send(JSON.stringify({ type: "candidate", candidate: data.candidate }));
-                });
+                const target = receivers.find(r => r.id === targetId);
+                if (target) {
+                    target.ws.send(JSON.stringify({
+                        type: "candidate",
+                        candidate: data.candidate,
+                        receiverId: targetId
+                    }));
+                    console.log(`candidate を受信側ID=${targetId} に送信`);
+                }
             } else {
+                // receiver から来た candidate → sender へ
                 if (sender) {
-                    sender.send(JSON.stringify({ type: "candidate", candidate: data.candidate }));
+                    sender.send(JSON.stringify({
+                        type: "candidate",
+                        candidate: data.candidate,
+                        receiverId: targetId
+                    }));
+                    console.log(`candidate を送信（receiverId=${targetId}）`);
                 }
             }
-            console.log("candidate を送信");
         }
     });
 
@@ -86,9 +112,16 @@ wss.on("connection", ws => {
         if (ws === sender) {
             sender = null;
             console.log("送信側が切断されました");
+
+            // ★sender が切れたら、全 receiver に通知（必要なら）
+            receivers.forEach(r => {
+                r.ws.send(JSON.stringify({ type: "sender-disconnected" }));
+            });
         } else {
-            receivers = receivers.filter(r => r !== ws);
-            console.log("受信側が切断されました（現在 " + receivers.length + " 人）");
+            const before = receivers.length;
+            receivers = receivers.filter(r => r.ws !== ws);
+            const after = receivers.length;
+            console.log(`受信側が切断されました（前 ${before} → 現在 ${after} 人）`);
         }
         broadcastViewerCount();
     });
