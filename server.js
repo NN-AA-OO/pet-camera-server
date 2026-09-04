@@ -1,29 +1,49 @@
-// server/server.js
-const WebSocket = require('ws');
+const WebSocket = require("ws");
 
-const PORT = process.env.PORT || 3000;
+const PASSWORD = "mugichan";
 
-const wss = new WebSocket.Server({ port: PORT });
+const wss = new WebSocket.Server({ port: 10000 });
+console.log("シグナリングサーバー起動（port 10000）");
 
-const clients = new Set();
+let sender = null;
+let receiver = null;
 
-wss.on('connection', (ws) => {
-  clients.add(ws);
-  console.log('クライアント接続');
+wss.on("connection", ws => {
+    ws.on("message", msg => {
+        const data = JSON.parse(msg);
 
-  ws.on('message', (message) => {
-    // 受信したシグナルを他のクライアントに中継
-    for (const client of clients) {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    }
-  });
+        if (data.type === "auth") {
+            if (data.password !== PASSWORD) {
+                ws.send(JSON.stringify({ type: "auth-ng" }));
+                return;
+            }
+            ws.send(JSON.stringify({ type: "auth-ok" }));
 
-  ws.on('close', () => {
-    clients.delete(ws);
-    console.log('クライアント切断');
-  });
+            if (!sender) {
+                sender = ws;
+                console.log("送信側が接続しました");
+            } else {
+                receiver = ws;
+                console.log("受信側が接続しました");
+            }
+        }
+
+        if (data.type === "offer" && receiver) {
+            receiver.send(JSON.stringify({ type: "offer", offer: data.offer }));
+        }
+
+        if (data.type === "answer" && sender) {
+            sender.send(JSON.stringify({ type: "answer", answer: data.answer }));
+        }
+
+        if (data.type === "candidate") {
+            if (ws === sender && receiver) receiver.send(JSON.stringify({ type: "candidate", candidate: data.candidate }));
+            if (ws === receiver && sender) sender.send(JSON.stringify({ type: "candidate", candidate: data.candidate }));
+        }
+    });
+
+    ws.on("close", () => {
+        if (ws === sender) sender = null;
+        if (ws === receiver) receiver = null;
+    });
 });
-
-console.log(`Signaling server running on port ${PORT}`);
