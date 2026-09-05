@@ -113,7 +113,6 @@ wss.on("connection", ws => {
             sender = null;
             console.log("送信側が切断されました");
 
-            // ★sender が切れたら、全 receiver に通知（必要なら）
             receivers.forEach(r => {
                 r.ws.send(JSON.stringify({ type: "sender-disconnected" }));
             });
